@@ -7,6 +7,21 @@ agent through its deliveries, and writes a per-agent report to `report.json`.
 **Requirements:** Python 3.12 (3.8+ is likely fine, but only 3.12 was
 tested). Standard library only; there is nothing to install.
 
+## Assignment coverage
+
+| Task | Where |
+|---|---|
+| 1. Read and parse the JSON file | `load_data` (both input layouts, with validation) |
+| 2. Assign each package to the nearest agent | `assign_packages`, Euclidean `distance` |
+| 3. Simulate pickup and delivery, total distance | `simulate` |
+| 4. Generate the report | `build_report` |
+| 5. Save to `report.json` | `main` (`-o` to choose another path) |
+| Bonus: random delivery delays | `--delays [--seed N]` |
+| Bonus: visualize routes in ASCII | `--ascii` (`render_ascii`) |
+| Bonus: new agent joining mid-day | `--late-agent ID X Y MINUTE` (`add_late_agent`) |
+| Bonus: export top performer to CSV | `--csv [PATH]` (`export_top_performer`) |
+| Delivered count matches total packages | checked at runtime in `build_report` and in the tests for every input file |
+
 ## Usage
 
 ```
@@ -201,6 +216,20 @@ Fields added only when a flag is used:
    warehouse strictly earlier than the assigned agent's planned arrival.
    The day is then simulated again.
 
+### Worked example (`data.json`)
+
+Distances from each agent's start to W1 (0, 0) are A1 7.07, A2 84.85 and
+A3 99.62, so A1 gets both W1 packages (P1, P4). In the same way A2 gets the
+W2 packages and A3 gets the W3 package.
+
+| Agent | Route | Legs | Total | Efficiency |
+|---|---|---|---|---|
+| A1 | (5,5) → W1 (0,0) → P4 (10,10) → P1 (30,40) | 7.07 + 14.14 + 36.06 | 57.27 | 57.27 / 2 = 28.63 |
+| A2 | (60,60) → W2 (50,75) → P5 (40,80) → P2 (70,90) | 18.03 + 11.18 + 31.62 | 60.83 | 60.83 / 2 = 30.42 |
+| A3 | (95,30) → W3 (100,25) → P3 (105,20) | 7.07 + 7.07 | 14.14 | 14.14 / 1 = 14.14 |
+
+A3 has the lowest distance per package, so it is `best_agent`.
+
 ## Assumptions and design decisions
 
 - "Parse the JSON file manually" is read as opening and parsing the file
@@ -220,7 +249,9 @@ Fields added only when a flag is used:
   full precision.
 - Invalid input fails with an error message and exit code 1 instead of
   skipping data. That covers unknown warehouses, malformed or non-finite
-  coordinates, duplicate ids or keys, and missing sections. As a result the
+  coordinates, ids that are not non-empty strings, duplicate ids or keys, an
+  agent named `best_agent` (it would clash with the report key), and missing
+  sections. As a result the
   number delivered always equals the number of packages, and this is also
   checked at runtime.
 - The sample report in the assignment PDF is illustrative. Its package counts
