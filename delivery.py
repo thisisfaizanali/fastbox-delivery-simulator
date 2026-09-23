@@ -183,10 +183,12 @@ def simulate(warehouses, agents, assignments, seed=None, start_times=None):
                 if d < best_dist:
                     best_wid, best_dist = wid, d
 
-            # Record when the agent leaves for this batch; add_late_agent uses
-            # it to tell which batches have not left yet.
+            # Record when the agent leaves for this batch and when it reaches
+            # the warehouse; add_late_agent uses these to tell which batches
+            # have not left yet and who would get there first.
             dispatches.append({
                 "minute": clock,
+                "arrival": clock + best_dist,
                 "warehouse": best_wid,
                 "packages": [p["id"] for p in by_warehouse[best_wid]],
             })
@@ -233,34 +235,31 @@ def add_late_agent(warehouses, agents, packages, assignments, results,
                    late_id, late_loc, join_minute, seed):
     """Add an agent who joins at join_minute and re-simulate the day.
 
-    Batches that have not been dispatched yet (dispatch minute >= join_minute)
-    can move to the late agent, using the same nearest-agent rule as
-    assign_packages. Returns (agents2, assignments2, results2).
+    A batch that has not been dispatched yet (dispatch minute >= join_minute)
+    moves to the late agent if the late agent would reach its warehouse
+    strictly earlier than the assigned agent's planned arrival. Comparing
+    start locations instead would almost never move anything, because the
+    assigned agent already has the nearest start.
+    Returns (agents2, assignments2, results2).
     """
     if late_id in agents:
         raise ValueError(f"late agent id {late_id!r} already exists")
     if join_minute < 0:
         raise ValueError(f"join minute must be >= 0, got {join_minute}")
 
-    waiting = {
-        pid
-        for res in results.values()
-        for d in res["dispatches"]
-        if d["minute"] >= join_minute
-        for pid in d["packages"]
-    }
-    owner = {p["id"]: agent_id for agent_id, pkgs in assignments.items() for p in pkgs}
-
-    # Limitation: heuristic. It compares start locations, as the spec's
-    # assignment rule does, not where agents actually are at join_minute.
-    # The upgrade path is a dispatcher that uses live positions and
-    # re-optimises routes.
+    # Limitation: arrival times come from the original plan; removing a batch
+    # can make the original agent's later batches earlier than estimated.
+    # The upgrade path is iterating to a fixed point or a full re-optimising
+    # dispatcher.
     moved = set()
-    for pkg in packages:
-        if pkg["id"] in waiting:
-            origin = warehouses[pkg["warehouse"]]
-            if distance(late_loc, origin) < distance(agents[owner[pkg["id"]]], origin):
-                moved.add(pkg["id"])
+    # Agents in input order, then dispatches in route order: deterministic.
+    for res in results.values():
+        for d in res["dispatches"]:
+            if d["minute"] < join_minute:
+                continue  # already on its way
+            late_arrival = join_minute + distance(late_loc, warehouses[d["warehouse"]])
+            if late_arrival < d["arrival"]:
+                moved.update(d["packages"])
 
     agents2 = {**agents, late_id: late_loc}  # appended last, so listed last in the report
     # Only packages that had not left yet are removed, so each original

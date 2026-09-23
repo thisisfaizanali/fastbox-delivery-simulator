@@ -176,6 +176,17 @@ class TimeTests(unittest.TestCase):
         self.assertEqual(results2["L"]["delivered"], ["P2"])
         self.assertEqual(results2["A1"]["delivered"], ["P1"])
 
+    def test_late_agent_arrives_first(self):
+        """In test_case_10, A5 at (10, 15) from minute 20 takes P4 and P10 from A3."""
+        w, a, p = delivery.load_data(os.path.join(HERE, "test_cases", "test_case_10.json"))
+        assign = delivery.assign_packages(w, a, p)
+        results = delivery.simulate(w, a, assign)
+        _, assign2, results2 = delivery.add_late_agent(
+            w, a, p, assign, results, "A5", (10.0, 15.0), 20.0, None)
+        self.assertEqual(sorted(results2["A5"]["delivered"]), ["P10", "P4"])
+        self.assertNotIn("P4", [x["id"] for x in assign2["A3"]])
+        delivery.build_report(results2, len(p))  # raises if the invariant breaks
+
     def test_cli_late_agent_fields(self):
         """--late-agent adds joined_at_minute to the late agent's report entry."""
         with tempfile.TemporaryDirectory() as tmp:
