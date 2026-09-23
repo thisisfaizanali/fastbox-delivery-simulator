@@ -4,8 +4,10 @@ Loads warehouses, agents and packages from JSON, assigns each package to the
 nearest agent, and computes how far each agent travels.
 """
 
+import argparse
 import json
 import math
+import sys
 from numbers import Real
 
 
@@ -120,3 +122,130 @@ def assign_packages(warehouses, agents, packages):
                 best_id, best_dist = agent_id, d
         assignments[best_id].append(pkg)
     return assignments
+
+
+def simulate(warehouses, agents, assignments):
+    """Walk each agent through its deliveries and record the path.
+
+    Returns {agent_id: {"route", "delivered", "total_distance"}}. An agent
+    with nothing to deliver stays at its start with distance 0.
+
+    Routing is batched and nearest-first: go to the nearest warehouse that
+    still holds this agent's packages, pick up all of them there (capacity
+    is unlimited), and drop them off nearest destination first. Picking up
+    the whole batch at once avoids returning to the same warehouse. There
+    is no return trip at the end.
+    """
+    results = {}
+    for agent_id, start in agents.items():
+        position = start
+        route = [start]
+        delivered = []
+        total = 0.0  # accumulated at full precision; rounding happens in the report
+        pending = list(assignments.get(agent_id, []))  # already in input order
+
+        while pending:
+            # Group pending packages by warehouse. dict order is the order in
+            # which each warehouse's first pending package appears in the
+            # input, so strict < below breaks ties by input order.
+            by_warehouse = {}
+            for pkg in pending:
+                by_warehouse.setdefault(pkg["warehouse"], []).append(pkg)
+
+            best_wid, best_dist = None, math.inf
+            for wid in by_warehouse:
+                d = distance(position, warehouses[wid])
+                if d < best_dist:
+                    best_wid, best_dist = wid, d
+
+            # Travel to the warehouse and pick up everything waiting there.
+            position = warehouses[best_wid]
+            total += best_dist
+            route.append(position)
+            batch = by_warehouse[best_wid]
+            pending = [p for p in pending if p["warehouse"] != best_wid]
+
+            # Nearest-neighbour drop-off. min() returns the first minimum,
+            # so ties go to the package that came first in the input.
+            while batch:
+                nxt = min(batch, key=lambda p: distance(position, p["destination"]))
+                total += distance(position, nxt["destination"])
+                position = nxt["destination"]
+                route.append(position)
+                delivered.append(nxt["id"])
+                batch.remove(nxt)
+
+        results[agent_id] = {"route": route, "delivered": delivered, "total_distance": total}
+    return results
+
+
+def build_report(results, total_packages):
+    """Build the report dict: one entry per agent plus "best_agent".
+
+    Efficiency is distance per package, so lower is better. Agents with no
+    deliveries have efficiency None and cannot be best. Ties go to the agent
+    with more deliveries, then to input order. The comparison uses unrounded
+    values so rounding cannot create or hide a tie.
+    """
+    report = {}
+    best_id, best_key = None, None
+    for index, (agent_id, res) in enumerate(results.items()):
+        count = len(res["delivered"])
+        dist = res["total_distance"]
+        eff = dist / count if count else None
+        report[agent_id] = {
+            "packages_delivered": count,
+            "total_distance": round(dist, 2),
+            "efficiency": round(eff, 2) if eff is not None else None,
+            "delivered_packages": list(res["delivered"]),
+        }
+        if eff is not None:
+            # Tuples compare element by element: efficiency, then more
+            # deliveries (hence -count), then input position.
+            key = (eff, -count, index)
+            if best_key is None or key < best_key:
+                best_id, best_key = agent_id, key
+
+    # Every package must be delivered exactly once; anything else is a bug.
+    delivered_total = sum(r["packages_delivered"] for r in report.values())
+    if delivered_total != total_packages:
+        raise RuntimeError(
+            f"delivered {delivered_total} packages but input has {total_packages}"
+        )
+
+    report["best_agent"] = best_id
+    return report
+
+
+def main():
+    """CLI entry point: simulate one input file and write a JSON report."""
+    parser = argparse.ArgumentParser(description="FastBox delivery simulator")
+    parser.add_argument("input", nargs="?", default="data.json", help="input JSON file")
+    parser.add_argument("-o", "--output", default="report.json", help="report file to write")
+    args = parser.parse_args()
+
+    try:
+        warehouses, agents, packages = load_data(args.input)
+    except (ValueError, FileNotFoundError) as exc:
+        # json.JSONDecodeError is a subclass of ValueError, so this catches it too.
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    assignments = assign_packages(warehouses, agents, packages)
+    results = simulate(warehouses, agents, assignments)
+    report = build_report(results, len(packages))
+
+    with open(args.output, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+
+    for agent_id in agents:
+        r = report[agent_id]
+        eff = f"{r['efficiency']:.2f}" if r["efficiency"] is not None else "n/a"
+        print(f"{agent_id}: {r['packages_delivered']} delivered {r['delivered_packages']}, "
+              f"distance {r['total_distance']:.2f}, efficiency {eff}")
+    print(f"Best agent: {report['best_agent']}")
+    print(f"Report written to {args.output}")
+
+
+if __name__ == "__main__":
+    main()
