@@ -277,6 +277,7 @@ A3 has the lowest distance per package, so it is `best_agent`.
 delivery.py        simulator: parsing, assignment, routing, report, CLI
 test_delivery.py   unit tests (unittest)
 data.json          sample input from the assignment
+report.json        report generated from data.json (python delivery.py)
 test_cases/        provided inputs: base_case.json (list form), test_case_1-10.json
 README.md          this file
 ```
