@@ -125,6 +125,70 @@ class SimulateAndReportTests(unittest.TestCase):
                 self.assertEqual(delivered, sorted(p["id"] for p in packages))
 
 
+class TimeTests(unittest.TestCase):
+    def setUp(self):
+        self.w, self.a, self.p = delivery.load_data(DATA)
+        self.assign = delivery.assign_packages(self.w, self.a, self.p)
+
+    def test_same_seed_same_result(self):
+        """The same seed gives identical results."""
+        first = delivery.simulate(self.w, self.a, self.assign, seed=7)
+        self.assertEqual(first, delivery.simulate(self.w, self.a, self.assign, seed=7))
+
+    def test_delays_change_time_not_distance(self):
+        """Delays leave total_distance unchanged but make agents finish later."""
+        plain = delivery.simulate(self.w, self.a, self.assign)
+        delayed = delivery.simulate(self.w, self.a, self.assign, seed=7)
+        for agent in self.a:
+            with self.subTest(agent):
+                self.assertEqual(plain[agent]["total_distance"], delayed[agent]["total_distance"])
+                self.assertGreater(delayed[agent]["finish_time"], plain[agent]["finish_time"])
+
+    def test_late_agent_report(self):
+        """A late agent is listed last, every package is still delivered once."""
+        results = delivery.simulate(self.w, self.a, self.assign)
+        agents2, _, results2 = delivery.add_late_agent(
+            self.w, self.a, self.p, self.assign, results, "A9", (50.0, 50.0), 30.0, None)
+        report = delivery.build_report(results2, len(self.p))  # raises if the invariant breaks
+        self.assertEqual(list(agents2)[-1], "A9")
+        self.assertIn("A9", report)
+
+    def test_late_agent_existing_id_rejected(self):
+        """Reusing an existing agent id raises ValueError."""
+        results = delivery.simulate(self.w, self.a, self.assign)
+        with self.assertRaises(ValueError):
+            delivery.add_late_agent(
+                self.w, self.a, self.p, self.assign, results, "A1", (0.0, 0.0), 0.0, None)
+
+    def test_late_agent_takes_nearby_warehouse(self):
+        """A late agent standing on a far warehouse at minute 0 takes its packages."""
+        warehouses = {"W1": (0.0, 0.0), "W2": (100.0, 0.0)}
+        agents = {"A1": (0.0, 0.0)}
+        packages = [
+            {"id": "P1", "warehouse": "W1", "destination": (1.0, 0.0)},
+            {"id": "P2", "warehouse": "W2", "destination": (101.0, 0.0)},
+        ]
+        assignments = delivery.assign_packages(warehouses, agents, packages)
+        results = delivery.simulate(warehouses, agents, assignments)
+        _, _, results2 = delivery.add_late_agent(
+            warehouses, agents, packages, assignments, results, "L", (100.0, 0.0), 0.0, None)
+        self.assertEqual(results2["L"]["delivered"], ["P2"])
+        self.assertEqual(results2["A1"]["delivered"], ["P1"])
+
+    def test_cli_late_agent_fields(self):
+        """--late-agent adds joined_at_minute to the late agent's report entry."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "report.json")
+            proc = subprocess.run(
+                [sys.executable, "delivery.py", "data.json", "-o", out,
+                 "--late-agent", "A9", "50", "50", "30"],
+                cwd=HERE, capture_output=True, text=True,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            with open(out, encoding="utf-8") as f:
+                self.assertEqual(json.load(f)["A9"]["joined_at_minute"], 30)
+
+
 class CliTests(unittest.TestCase):
     def test_cli_writes_report(self):
         """The CLI exits 0 and writes a report naming A3 as best agent."""
