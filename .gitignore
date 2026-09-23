@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+# Generated outputs
+report.json
+top_performer.csv
+# AI agent / assistant files (never tracked)
+CLAUDE.md
+.claude/
+AGENTS.md
+.agents/
