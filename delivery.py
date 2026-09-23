@@ -30,6 +30,16 @@ def _parse_point(value, what):
     return (float(value[0]), float(value[1]))
 
 
+def _check_id(value, what):
+    """Raise ValueError unless value is a non-empty string id.
+
+    Ids are used as dict keys, report keys and CSV text, so a number, list
+    or null id would crash later with a confusing error.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{what}: id must be a non-empty string, got {value!r}")
+
+
 def _parse_locations(raw, kind):
     """Normalize warehouses or agents into {id: (x, y)}.
 
@@ -49,6 +59,7 @@ def _parse_locations(raw, kind):
 
     result = {}
     for item_id, location in items:
+        _check_id(item_id, kind)
         if item_id in result:
             raise ValueError(f"{kind}: duplicate id {item_id!r}")
         result[item_id] = _parse_point(location, f"{kind} {item_id!r}")
@@ -87,6 +98,9 @@ def load_data(path):
 
     warehouses = _parse_locations(data["warehouses"], "warehouse")
     agents = _parse_locations(data["agents"], "agent")
+    # Agent ids share the report's top level with "best_agent".
+    if "best_agent" in agents:
+        raise ValueError("agent id 'best_agent' is reserved for the report")
 
     if not isinstance(data["packages"], list):
         raise ValueError("packages: expected a list")
@@ -96,11 +110,12 @@ def load_data(path):
         if not isinstance(raw, dict) or "id" not in raw or "destination" not in raw:
             raise ValueError(f"package entry needs 'id' and 'destination': {raw!r}")
         pid = raw["id"]
+        _check_id(pid, "package")
         # The dict format uses "warehouse" and the list format uses "warehouse_id".
         wid = raw.get("warehouse", raw.get("warehouse_id"))
         if pid in seen:
             raise ValueError(f"package: duplicate id {pid!r}")
-        if wid not in warehouses:
+        if not isinstance(wid, str) or wid not in warehouses:
             raise ValueError(f"package {pid!r}: unknown warehouse {wid!r}")
         seen.add(pid)
         packages.append({
@@ -249,8 +264,8 @@ def add_late_agent(warehouses, agents, packages, assignments, results,
 
     # Limitation: arrival times come from the original plan; removing a batch
     # can make the original agent's later batches earlier than estimated.
-    # The upgrade path is iterating to a fixed point or a full re-optimising
-    # dispatcher.
+    # Iterating to a fixed point or a full re-optimising dispatcher would
+    # remove this.
     moved = set()
     # Agents in input order, then dispatches in route order: deterministic.
     for res in results.values():
@@ -328,6 +343,8 @@ def render_ascii(warehouses, agents, packages, results, width=60, height=20):
         + [p["destination"] for p in packages]
         + [pt for res in results.values() for pt in res["route"]]
     )
+    if not points:
+        return "(nothing to draw: no warehouses, agents or packages)"
     min_x = min(x for x, _ in points)
     min_y = min(y for _, y in points)
     # max(span, 1) avoids dividing by zero when every point shares an x or y.
@@ -432,8 +449,15 @@ def main():
         if late_id is not None:
             report[late_id]["joined_at_minute"] = join_minute
 
-    with open(args.output, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2)
+    try:
+        with open(args.output, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2)
+        if args.csv:
+            export_top_performer(report, args.csv)
+    except OSError as exc:
+        # e.g. the output path is a directory or not writable.
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     for agent_id in agents:
         r = report[agent_id]
@@ -447,7 +471,6 @@ def main():
     print(f"Best agent: {report['best_agent']}")
     print(f"Report written to {args.output}")
     if args.csv:
-        export_top_performer(report, args.csv)
         print(f"Top performer written to {args.csv}")
     if args.ascii:
         print(render_ascii(warehouses, agents, packages, results))

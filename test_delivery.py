@@ -56,6 +56,10 @@ class LoadTests(unittest.TestCase):
             "duplicate package": '{%s, %s, "packages": [%s, %s]}' % (good_w, good_a, pkg % "[1, 2]", pkg % "[3, 4]"),
             "duplicate agent key": '{%s, "agents": {"A1": [1, 1], "A1": [2, 2]}, "packages": []}' % good_w,
             "missing packages": "{%s, %s}" % (good_w, good_a),
+            "numeric package id": '{%s, %s, "packages": [{"id": 1, "warehouse": "W1", "destination": [1, 2]}]}' % (good_w, good_a),
+            "list warehouse ref": '{%s, %s, "packages": [{"id": "P1", "warehouse": ["W1"], "destination": [1, 2]}]}' % (good_w, good_a),
+            "list-form list id": '{"warehouses": [{"id": ["W1"], "location": [0, 0]}], %s, "packages": []}' % good_a,
+            "reserved agent id": '{%s, "agents": {"best_agent": [1, 1]}, "packages": []}' % good_w,
         }
         for name, text in cases.items():
             with self.subTest(name):
