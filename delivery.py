@@ -21,8 +21,10 @@ def _parse_point(value, what):
         not isinstance(value, list)
         or len(value) != 2
         or not all(isinstance(v, Real) and not isinstance(v, bool) for v in value)
+        # json.load accepts NaN and Infinity, which would break every distance.
+        or not all(math.isfinite(v) for v in value)
     ):
-        raise ValueError(f"{what}: expected [x, y] with two numbers, got {value!r}")
+        raise ValueError(f"{what}: expected [x, y] with two finite numbers, got {value!r}")
     return (float(value[0]), float(value[1]))
 
 
@@ -34,8 +36,6 @@ def _parse_locations(raw, kind):
     which the tie-break rules depend on.
     """
     if isinstance(raw, dict):
-        # json.load keeps only the last copy of a duplicate key, so
-        # duplicates in dict form cannot be detected here.
         items = list(raw.items())
     elif isinstance(raw, list):
         try:
@@ -53,6 +53,20 @@ def _parse_locations(raw, kind):
     return result
 
 
+def _reject_duplicate_keys(pairs):
+    """object_pairs_hook for json.load that raises on a repeated key.
+
+    By default json.load keeps only the last copy of a repeated key, so a
+    duplicate warehouse or agent in dict form would be lost without an error.
+    """
+    keys = set()
+    for key, _ in pairs:
+        if key in keys:
+            raise ValueError(f"duplicate key {key!r} in input")
+        keys.add(key)
+    return dict(pairs)
+
+
 def load_data(path):
     """Read an input file and return (warehouses, agents, packages).
 
@@ -61,7 +75,7 @@ def load_data(path):
     because ties are broken by input order. Raises ValueError on bad input.
     """
     with open(path, encoding="utf-8") as f:
-        data = json.load(f)
+        data = json.load(f, object_pairs_hook=_reject_duplicate_keys)
 
     if not isinstance(data, dict):
         raise ValueError("top level must be a JSON object")
@@ -226,7 +240,8 @@ def main():
 
     try:
         warehouses, agents, packages = load_data(args.input)
-    except (ValueError, FileNotFoundError) as exc:
+    except (ValueError, OSError) as exc:
+        # OSError covers a missing file, a directory path and permission errors.
         # json.JSONDecodeError is a subclass of ValueError, so this catches it too.
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
