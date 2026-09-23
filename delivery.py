@@ -5,6 +5,7 @@ nearest agent, and computes how far each agent travels.
 """
 
 import argparse
+import csv
 import json
 import math
 import random
@@ -312,6 +313,79 @@ def build_report(results, total_packages):
     return report
 
 
+AGENT_CHARS = "123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def render_ascii(warehouses, agents, packages, results, width=60, height=20):
+    """Return a text map of every agent's route.
+
+    Route legs are drawn with the agent's index character (see the legend).
+    Markers are drawn on top of the routes: '*' destination, 'W' warehouse,
+    '@' agent start.
+    """
+    points = (
+        list(warehouses.values())
+        + list(agents.values())
+        + [p["destination"] for p in packages]
+        + [pt for res in results.values() for pt in res["route"]]
+    )
+    min_x = min(x for x, _ in points)
+    min_y = min(y for _, y in points)
+    # max(span, 1) avoids dividing by zero when every point shares an x or y.
+    span_x = max(max(x for x, _ in points) - min_x, 1)
+    span_y = max(max(y for _, y in points) - min_y, 1)
+
+    def cell(point):
+        """Map a point to (row, col). Row 0 is the top, so y points up."""
+        col = round((point[0] - min_x) / span_x * (width - 1))
+        row = round((1 - (point[1] - min_y) / span_y) * (height - 1))
+        return row, col
+
+    grid = [[" "] * width for _ in range(height)]
+    for index, (agent_id, res) in enumerate(results.items()):
+        char = AGENT_CHARS[index % len(AGENT_CHARS)]
+        for a, b in zip(res["route"], res["route"][1:]):
+            (r1, c1), (r2, c2) = cell(a), cell(b)
+            # One step per grid cell along the longer axis leaves no gaps.
+            steps = max(abs(c2 - c1), abs(r2 - r1), 1)
+            for i in range(steps + 1):
+                grid[round(r1 + (r2 - r1) * i / steps)][round(c1 + (c2 - c1) * i / steps)] = char
+
+    # Markers go on last so routes never hide them; later layers win.
+    for marker, pts in (
+        ("*", [p["destination"] for p in packages]),
+        ("W", warehouses.values()),
+        ("@", agents.values()),
+    ):
+        for pt in pts:
+            row, col = cell(pt)
+            grid[row][col] = marker
+
+    border = "+" + "-" * width + "+"
+    lines = [border] + ["|" + "".join(row) + "|" for row in grid] + [border]
+    for index, agent_id in enumerate(results):
+        lines.append(f"{AGENT_CHARS[index % len(AGENT_CHARS)]} = {agent_id}")
+    lines.append("@ agent start  W warehouse  * destination")
+    return "\n".join(lines)
+
+
+def export_top_performer(report, path):
+    """Write the best agent's report row to a CSV file.
+
+    If no agent delivered anything, only the header is written, so the file
+    always has the same columns.
+    """
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["agent_id", "packages_delivered", "total_distance",
+                         "efficiency", "delivered_packages"])
+        best = report["best_agent"]
+        if best is not None:
+            r = report[best]
+            writer.writerow([best, r["packages_delivered"], r["total_distance"],
+                             r["efficiency"], ";".join(r["delivered_packages"])])
+
+
 def main():
     """CLI entry point: simulate one input file and write a JSON report."""
     parser = argparse.ArgumentParser(description="FastBox delivery simulator")
@@ -321,6 +395,9 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="seed for --delays (default 42)")
     parser.add_argument("--late-agent", nargs=4, metavar=("ID", "X", "Y", "MINUTE"),
                         help="an agent who starts at (X, Y) at MINUTE")
+    parser.add_argument("--ascii", action="store_true", help="print an ASCII map of the routes")
+    parser.add_argument("--csv", nargs="?", const="top_performer.csv", metavar="PATH",
+                        help="write the best agent to a CSV file (default top_performer.csv)")
     args = parser.parse_args()
 
     # Seed only with --delays: simulate treats seed=None as "no delays".
@@ -370,6 +447,11 @@ def main():
               f"and took {report[late_id]['packages_delivered']} package(s)")
     print(f"Best agent: {report['best_agent']}")
     print(f"Report written to {args.output}")
+    if args.csv:
+        export_top_performer(report, args.csv)
+        print(f"Top performer written to {args.csv}")
+    if args.ascii:
+        print(render_ascii(warehouses, agents, packages, results))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """Unit tests for delivery.py. Run with: python -m unittest -v"""
 
+import csv
 import glob
 import json
 import os
@@ -187,6 +188,37 @@ class TimeTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             with open(out, encoding="utf-8") as f:
                 self.assertEqual(json.load(f)["A9"]["joined_at_minute"], 30)
+
+
+class OutputTests(unittest.TestCase):
+    def test_ascii_map(self):
+        """The ASCII map shows warehouses, agent starts, destinations and a legend."""
+        w, a, p = delivery.load_data(DATA)
+        results = delivery.simulate(w, a, delivery.assign_packages(w, a, p))
+        text = delivery.render_ascii(w, a, p, results)
+        for mark in ("W", "@", "*", "1 = A1"):
+            self.assertIn(mark, text)
+
+    def test_csv_best_agent(self):
+        """The CSV holds the header and one row for best agent A3."""
+        _, report = run_pipeline(DATA)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "top.csv")
+            delivery.export_top_performer(report, path)
+            with open(path, encoding="utf-8", newline="") as f:
+                rows = list(csv.reader(f))
+        self.assertEqual(rows[0], ["agent_id", "packages_delivered", "total_distance",
+                                   "efficiency", "delivered_packages"])
+        self.assertEqual(rows[1:], [["A3", "1", "14.14", "14.14", "P3"]])
+
+    def test_csv_no_deliveries(self):
+        """With no deliveries the CSV has only the header."""
+        report = delivery.build_report({"A1": {"delivered": [], "total_distance": 0.0}}, 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "top.csv")
+            delivery.export_top_performer(report, path)
+            with open(path, encoding="utf-8", newline="") as f:
+                self.assertEqual(len(list(csv.reader(f))), 1)
 
 
 class CliTests(unittest.TestCase):
